@@ -19,11 +19,11 @@ import { Editor } from '../../pageobjects/ide/Editor';
 import { PreviewWidget } from '../../pageobjects/ide/PreviewWidget';
 import { TestConstants } from '../../TestConstants';
 import { RightToolbar } from '../../pageobjects/ide/RightToolbar';
-import { By, Key } from 'selenium-webdriver';
+import { By, Key, error } from 'selenium-webdriver';
 import { Terminal } from '../../pageobjects/ide/Terminal';
 import { DebugView } from '../../pageobjects/ide/DebugView';
 import { WarningDialog } from '../../pageobjects/ide/WarningDialog';
-import * as fs from 'fs';
+
 const driverHelper: DriverHelper = e2eContainer.get(CLASSES.DriverHelper);
 const ide: Ide = e2eContainer.get(CLASSES.Ide);
 const projectTree: ProjectTree = e2eContainer.get(CLASSES.ProjectTree);
@@ -58,7 +58,7 @@ const SpringAppLocators = {
 };
 
 
-suite('Validation of workspace start, build and run', async () => {
+suite('Validation of workspace start', async () => {
     test('Open workspace', async () => {
         await driverHelper.navigateTo(workspaceUrl);
     });
@@ -127,6 +127,8 @@ suite('Language server validation', async () => {
         await projectTree.expandPathAndOpenFile(pathToJavaFolder, javaFileName);
         await editor.selectTab(javaFileName);
 
+        await ide.checkLsInitializationStart('Starting Java Language Server');
+
         await ide.waitStatusBarTextAbsence('Starting Java Language Server', 360000);
         await checkJavaPathCompletion();
         await ide.waitStatusBarTextAbsence('Building workspace', 360000);
@@ -169,6 +171,38 @@ suite('Language server validation', async () => {
     });
 });
 
+suite('Validation of workspace build and run', async () => {
+    test('Build application', async () => {
+        await runTask('che: build-file-output');
+
+        await projectTree.expandPathAndOpenFile(projectName, 'build-output.txt');
+        await editor.followAndWaitForText('build-output.txt', '[INFO] BUILD SUCCESS', 180000, 5000);
+    });
+
+    test('Run application', async () => {
+        await runTask('che: run');
+        await ide.waitNotificationAndConfirm('A new process is now listening on port 8080', 120000);
+        await ide.waitNotificationAndOpenLink('Redirect is now enabled on port 8080', 120000);
+    });
+
+    test('Check the running application', async () => {
+        await previewWidget.waitContentAvailable(SpringAppLocators.springTitleLocator, 60000, 10000);
+    });
+
+    test('Close preview widget', async () => {
+        await rightToolbar.clickOnToolIcon('Preview');
+        await previewWidget.waitPreviewWidgetAbsence();
+    });
+
+    test('Close the terminal running tasks', async () => {
+        await terminal.closeTerminalTab('build-file-output');
+        await terminal.rejectTerminalProcess('run');
+        await terminal.closeTerminalTab('run');
+
+        await warningDialog.waitAndCloseIfAppear();
+    });
+});
+
 suite('Display source code changes in the running application', async () => {
     test('Change source code', async () => {
         await projectTree.expandPathAndOpenFile(pathToChangedJavaFileFolder, changedJavaFileName);
@@ -182,8 +216,7 @@ suite('Display source code changes in the running application', async () => {
     });
 
     test('Build application with changes', async () => {
-        await topMenu.selectOption('Terminal', 'Run Task...');
-        await quickOpenContainer.clickOnContainerItem('che: build');
+        await runTask('che: build');
 
         await projectTree.expandPathAndOpenFile(projectName, 'build.txt');
         await editor.waitEditorAvailable('build.txt');
@@ -193,8 +226,7 @@ suite('Display source code changes in the running application', async () => {
     });
 
     test('Run application with changes', async () => {
-        await topMenu.selectOption('Terminal', 'Run Task...');
-        await quickOpenContainer.clickOnContainerItem('che: run-with-changes');
+        await runTask('che: run-with-changes');
 
         await ide.waitNotificationAndConfirm('A new process is now listening on port 8080', 120000);
         await ide.waitNotificationAndOpenLink('Redirect is now enabled on port 8080', 120000);
@@ -231,8 +263,7 @@ suite('Validation of debug functionality', async () => {
     });
 
     test('Launch debug', async () => {
-        await topMenu.selectOption('Terminal', 'Run Task...');
-        await quickOpenContainer.clickOnContainerItem('che: run-debug');
+        await runTask('che: run-debug');
 
         await ide.waitNotificationAndConfirm('A new process is now listening on port 8080', 120000);
         await ide.waitNotificationAndOpenLink('Redirect is now enabled on port 8080', 120000);
@@ -276,4 +307,20 @@ async function checkJavaPathCompletion() {
         throw new Error('Known issue: https://github.com/eclipse/che/issues/13427 \n' +
             '\"Java LS \"Classpath is incomplete\" warning when loading petclinic\"');
     }
+}
+
+async function runTask(task: string) {
+    await topMenu.selectOption('Terminal', 'Run Task...');
+    try {
+        await quickOpenContainer.waitContainer();
+    } catch (err) {
+        if (err instanceof error.TimeoutError) {
+            console.log(`After clicking to the "Terminal" -> "Run Task ..." the "Quick Open Container" has not been displayed, one more try`);
+
+            await topMenu.selectOption('Terminal', 'Run Task...');
+            await quickOpenContainer.waitContainer();
+        }
+    }
+
+    await quickOpenContainer.clickOnContainerItem(task);
 }
