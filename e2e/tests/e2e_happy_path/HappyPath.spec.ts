@@ -105,7 +105,7 @@ suite('Validation of workspace start', async () => {
             const screenshotStream = fs.createWriteStream(testReportDirPath + screenshotFileName);
             screenshotStream.write(new Buffer(screenshot, 'base64'));
             screenshotStream.end();
-            await driverHelper.navigateTo(workspaceUrl);
+            await driverHelper.navigateToUrl(workspaceUrl);
         }
     });
 
